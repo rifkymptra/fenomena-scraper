@@ -1,34 +1,15 @@
 import re
 
-KEYWORDS = [
-    "pertanian","perkebunan","peternakan","perikanan",
-    "industri","tekstil","garment","pariwisata",
-    "hotel","restoran","wisata","umkm",
-    "perdagangan","pasar","harga","inflasi",
-    "investasi","jalan","transportasi",
-    "ekspor","impor","cabai","beras",
-    "bawang","kopi","teh","kentang",
-    "tenaga kerja","pengangguran","ekonomi","pdrb"
-]
-
-
 def summarize(text, n=3):
-
     text = text.replace("\n"," ")
-
     kalimat = re.split(r'(?<=[.!?]) +', text)
-
     return " ".join(kalimat[:n])
 
-
-def keyword(text):
-
+# Tambahkan parameter daftar_keyword
+def keyword(text, daftar_keyword):
     text = text.lower()
-
     hasil = []
-
-    for k in KEYWORDS:
+    for k in daftar_keyword:
         if k in text:
             hasil.append(k)
-
     return ", ".join(sorted(set(hasil)))

@@ -75,7 +75,7 @@ def get_title(soup):
     return ""
 
 
-def scrape():
+def scrape(daftar_keyword, url_existing):
 
     hasil = []
     visited = set()
@@ -87,6 +87,9 @@ def scrape():
     for a in soup.find_all("a", href=True):
 
         href = a["href"]
+
+        if href in url_existing:
+            continue
 
         if "/berita/" not in href:
             continue
@@ -132,7 +135,7 @@ def scrape():
 
             isi = data.get("text", "")
 
-            kw = keyword(isi)
+            kw = keyword(isi, daftar_keyword)
             if not kw:
                 continue
 

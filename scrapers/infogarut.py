@@ -13,7 +13,7 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
-def scrape():
+def scrape(daftar_keyword, url_existing):
     hasil = []
     visited = set()
     page = 1
@@ -41,12 +41,14 @@ def scrape():
                 break 
 
             for item in items:
-                # Asumsi API mengembalikan 'slug' untuk URL
                 slug = item.get("slug", "")
                 if not slug:
                     continue
                     
                 href = f"{WEB_URL}{slug}"
+
+                if href in url_existing:
+                    continue
                 
                 if href in visited:
                     continue
@@ -71,7 +73,7 @@ def scrape():
                 tanggal_str = art_data.get("date", "") # Format standar: YYYY-MM-DD
                 
                 # 1. Terapkan Filter Keyword
-                kw = keyword(text)
+                kw = keyword(text, daftar_keyword)
                 if not kw:
                     continue # Lewati jika tidak ada keyword ekonomi
                     
@@ -81,7 +83,7 @@ def scrape():
                         date_obj = datetime.strptime(tanggal_str, "%Y-%m-%d")
                         
                         # Cek apakah tanggal sebelum 1 Juni 2026
-                        if date_obj < datetime(2026, 7, 25):
+                        if date_obj < datetime(2026, 4, 1):
                             stop_scraping = True
                             print("\nBatas waktu (April 2026) tercapai. Selesai.")
                             break # Keluar dari loop artikel

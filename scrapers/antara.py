@@ -24,7 +24,7 @@ def parse_date_antara(html_text):
         return f"{tahun}-{MONTH[bulan]}-{int(hari):02d}"
     return ""
 
-def scrape():
+def scrape(daftar_keyword, url_existing):
     hasil = []
     visited = set()
     page = 1
@@ -58,6 +58,8 @@ def scrape():
             links = []
             for a in soup.find_all("a", href=True):
                 href = a["href"]
+                if href in url_existing:
+                    continue
                 if "/berita/" in href and href not in visited:
                     if href.startswith("/"):
                         href = f"https://jabar.antaranews.com{href}"
@@ -94,7 +96,7 @@ def scrape():
                 if not tanggal_str:
                     tanggal_str = art_data.get("date", "") 
                 
-                kw = keyword(text)
+                kw = keyword(text, daftar_keyword)
                 if not kw:
                     continue 
 
@@ -102,7 +104,7 @@ def scrape():
                 if tanggal_str:
                     try:
                         date_obj = datetime.strptime(tanggal_str, "%Y-%m-%d")
-                        if date_obj < datetime(2026, 7, 15):
+                        if date_obj < datetime(2026, 4, 1):
                             stop_scraping = True
                             print(f"\nBatas waktu tercapai pada artikel tgl {tanggal_str}. Berhenti memproses.")
                             break 

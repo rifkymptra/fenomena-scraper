@@ -27,7 +27,7 @@ def parse_date_detik(html_text):
         return f"{tahun}-{MONTH[bulan]}-{int(hari):02d}"
     return ""
 
-def scrape():
+def scrape(daftar_keyword, url_existing):
     hasil = []
     visited = set()
     page = 1
@@ -72,6 +72,9 @@ def scrape():
             if not links:
                 for a in soup.find_all("a", href=True):
                     href = a["href"]
+
+                    if href in url_existing:
+                        continue
                     if href not in visited and "-d-" in href and "/tag/" not in href:
                         links.append(href)
                         visited.add(href)
@@ -114,14 +117,14 @@ def scrape():
                 if tanggal_str:
                     try:
                         date_obj = datetime.strptime(tanggal_str[:10], "%Y-%m-%d")
-                        if date_obj < datetime(2026, 6, 1):
+                        if date_obj < datetime(2026, 4, 1):
                             artikel_lama_di_halaman_ini += 1
                             continue 
                     except ValueError:
                         pass
                 
                 # Filter Keyword Ekonomi
-                kw = keyword(text)
+                kw = keyword(text, daftar_keyword)
                 if not kw:
                     continue 
 
