@@ -1,93 +1,116 @@
-from supabase import create_client, Client
 import os
+import json
+import time
+from supabase import create_client, Client
+import google.generativeai as genai
 
 from scrapers.infogarut import scrape as infogarut
 from scrapers.antara import scrape as antara
 from scrapers.detik import scrape as detik
-from scrapers.garutkab import scrape as garutkab
 
-# --- MENGAMBIL KREDENSIAL DARI ENVIRONMENT VARIABLES ---
+# --- KREDENSIAL ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") # Kunci baru kita
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Kredensial Supabase tidak ditemukan di Environment Variables!")
+if not SUPABASE_URL or not SUPABASE_KEY or not GEMINI_API_KEY:
+    raise ValueError("Kredensial Supabase atau Gemini tidak ditemukan!")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+def analisis_dengan_ai(teks):
+    """Mengirim teks ke Gemini untuk disaring, diringkas, dan dicek sentimennya."""
+    prompt = f"""
+    Analisis artikel berita berikut yang berkaitan dengan Kabupaten Garut.
+    Tugas:
+    1. Tentukan apakah berita ini BENAR-BENAR membahas ekonomi, harga pangan, pertanian, pariwisata, UMKM, atau bisnis. (Jawab false jika ini berita kriminal, pembunuhan, pendidikan, atau kecelakaan meskipun ada kata 'harga').
+    2. Buat ringkasan yang enak dibaca (maksimal 2 kalimat).
+    3. Tentukan sentimen berita terhadap perekonomian (Positif, Negatif, atau Netral).
+
+    Output WAJIB berupa format JSON murni persis seperti ini (tanpa markdown tambahan):
+    {{
+        "relevan": true,
+        "ringkasan": "Isi ringkasan...",
+        "sentimen": "Positif"
+    }}
+
+    Teks berita:
+    {teks[:3000]} 
+    """
+    try:
+        response = model.generate_content(prompt)
+        # Membersihkan format markdown bawaan AI agar bisa dibaca Python
+        result_text = response.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(result_text)
+    except Exception as e:
+        print(f"Error AI: {e}")
+        return None
 
 def main():
     print("--- MEMULAI PROSES SCRAPING ---")
-    print("Mengambil pengaturan keyword dari database...")
     
     try:
         response = supabase.table('pengaturan_keyword').select('kata_kunci').eq('is_active', True).execute()
         daftar_keyword = [item['kata_kunci'] for item in response.data]
-        print(f"Keyword aktif ({len(daftar_keyword)}): {', '.join(daftar_keyword)}")
     except Exception as e:
-        print(f"Gagal mengambil keyword dari database: {e}")
+        print(f"Gagal ambil keyword: {e}")
         return
 
-    if not daftar_keyword:
-        print("Tidak ada keyword aktif. Proses dihentikan.")
-        return
+    if not daftar_keyword: return
 
-    # --- TAMBAHAN BARU: MENGAMBIL URL EXISTING ---
-    print("Mengambil riwayat URL dari database untuk mencegah duplikasi...")
     try:
         res_url = supabase.table('fenomena_ekonomi').select('url').execute()
-        # Ubah menjadi struktur data Set agar pencarian (lookup) super cepat
         url_existing = set(item['url'] for item in res_url.data) 
-        print(f"Terdapat {len(url_existing)} berita di database.")
-    except Exception as e:
-        print(f"Gagal mengambil URL existing, lanjut dengan database kosong: {e}")
+    except:
         url_existing = set()
 
     berita = []
-
-    # Oper juga url_existing ke dalam fungsi
-
-    print("\nMenjalankan scraper Garutkab...")
-    berita.extend(garutkab(daftar_keyword, url_existing))
-
-    print("\nMenjalankan scraper InfoGarut...")
+    print("\nMenjalankan scraper...")
     berita.extend(infogarut(daftar_keyword, url_existing))
-
-    print("\nMenjalankan scraper Antara Jabar...")
     berita.extend(antara(daftar_keyword, url_existing))
-
-    print("\nMenjalankan scraper Detik...")
     berita.extend(detik(daftar_keyword, url_existing))
 
-    print(f"\nTotal berita baru yang berhasil diekstrak: {len(berita)}")
     if len(berita) == 0:
-        print("Tidak ada berita baru yang relevan untuk disimpan.")
+        print("Tidak ada berita baru yang relevan.")
         return
 
-    # --- 1. DEDUPLIKASI INTERNAL ---
-    # Mengubah list menjadi dictionary dengan 'url' sebagai kunci untuk membuang duplikat otomatis
+    # Deduplikasi internal
     berita_unik_dict = {item['url']: item for item in berita}
-    berita_bersih = list(berita_unik_dict.values())
+    berita_mentah = list(berita_unik_dict.values())
 
-    print(f"Total berita unik siap simpan: {len(berita_bersih)}")
-    print("Menyimpan data ke Supabase...")
-    
+    # --- FASE KECERDASAN BUATAN (AI) ---
+    print(f"\nMemproses {len(berita_mentah)} berita dengan AI Gemini...")
+    berita_final_siap_simpan = []
+
+    for item in berita_mentah:
+        print(f"- Analisis AI: {item['judul_berita'][:40]}...")
+        hasil_ai = analisis_dengan_ai(item['isi_berita'])
+        
+        if hasil_ai and hasil_ai.get('relevan') == True:
+            # Timpa ringkasan lama dengan ringkasan cerdas buatan AI
+            item['ringkasan'] = hasil_ai.get('ringkasan', item['ringkasan'])
+            item['sentimen'] = hasil_ai.get('sentimen', 'Netral')
+            berita_final_siap_simpan.append(item)
+            print(f"  ✓ Lolos | Sentimen: {item['sentimen']}")
+        else:
+            print("  x Dibuang (Konteks tidak relevan)")
+        
+        # Jeda 4 detik agar tidak terkena limit API gratisan dari Google (15 request/menit)
+        time.sleep(4) 
+
+    # --- SIMPAN KE DATABASE ---
+    print(f"\nMenyimpan {len(berita_final_siap_simpan)} berita terverifikasi AI ke Supabase...")
     berita_masuk = 0
-    berita_duplikat_db = 0
-
-    # --- 2. PENYIMPANAN AMAN SATU PER SATU ---
-    for item in berita_bersih:
+    for item in berita_final_siap_simpan:
         try:
             supabase.table('fenomena_ekonomi').insert(item).execute()
             berita_masuk += 1
-        except Exception as e:
-            # Jika masih gagal (misal karena constraint lain), script tidak akan mati total
-            berita_duplikat_db += 1
+        except Exception:
             pass
 
-    print("\n--- RINGKASAN ---")
-    print(f"Berhasil disimpan : {berita_masuk} berita baru")
-    if berita_duplikat_db > 0:
-        print(f"Dilewati (Duplikat/Error) : {berita_duplikat_db} berita")
+    print(f"Berhasil disimpan: {berita_masuk} berita siap disajikan ke pimpinan!")
 
 if __name__ == "__main__":
     main()
