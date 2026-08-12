@@ -43,7 +43,7 @@ def analisis_dengan_ai(teks):
     try:
         # Cara panggil API dengan format genai terbaru
         response = ai_client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-3.6-flash',
             contents=prompt
         )
         # Membersihkan format markdown bawaan AI agar bisa dibaca Python
