@@ -2,7 +2,7 @@ import os
 import json
 import time
 from supabase import create_client, Client
-import google.generativeai as genai
+from google import genai # Menggunakan library baru
 
 from scrapers.infogarut import scrape as infogarut
 from scrapers.antara import scrape as antara
@@ -11,14 +11,15 @@ from scrapers.detik import scrape as detik
 # --- KREDENSIAL ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") # Kunci baru kita
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") 
 
 if not SUPABASE_URL or not SUPABASE_KEY or not GEMINI_API_KEY:
     raise ValueError("Kredensial Supabase atau Gemini tidak ditemukan!")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+
+# Inisiasi Client Gemini yang Baru
+ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 def analisis_dengan_ai(teks):
     """Mengirim teks ke Gemini untuk disaring, diringkas, dan dicek sentimennya."""
@@ -40,7 +41,11 @@ def analisis_dengan_ai(teks):
     {teks[:3000]} 
     """
     try:
-        response = model.generate_content(prompt)
+        # Cara panggil API dengan format genai terbaru
+        response = ai_client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt
+        )
         # Membersihkan format markdown bawaan AI agar bisa dibaca Python
         result_text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(result_text)
@@ -97,7 +102,7 @@ def main():
         else:
             print("  x Dibuang (Konteks tidak relevan)")
         
-        # Jeda 4 detik agar tidak terkena limit API gratisan dari Google (15 request/menit)
+        # Jeda 4 detik agar tidak terkena limit API gratisan
         time.sleep(4) 
 
     # --- SIMPAN KE DATABASE ---
@@ -110,7 +115,7 @@ def main():
         except Exception:
             pass
 
-    print(f"Berhasil disimpan: {berita_masuk} berita siap disajikan ke pimpinan!")
+    print(f"\nBerhasil disimpan: {berita_masuk} berita siap disajikan ke pimpinan!")
 
 if __name__ == "__main__":
     main()
