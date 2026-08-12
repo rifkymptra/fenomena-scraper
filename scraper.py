@@ -86,27 +86,34 @@ def main():
     berita_mentah = list(berita_unik_dict.values())
 
     # --- FASE KECERDASAN BUATAN (AI) ---
-    print(f"\nMemproses {len(berita_mentah)} berita dengan AI Gemini...")
+    print(f"\nMemproses {len(berita_mentah)} berita...")
     berita_final_siap_simpan = []
 
-    for item in berita_mentah:
-        print(f"- Analisis AI: {item['judul_berita'][:40]}...")
-        hasil_ai = analisis_dengan_ai(item['isi_berita'])
-        
-        if hasil_ai and hasil_ai.get('relevan') == True:
-            # Timpa ringkasan lama dengan ringkasan cerdas buatan AI
-            item['ringkasan'] = hasil_ai.get('ringkasan', item['ringkasan'])
-            item['sentimen'] = hasil_ai.get('sentimen', 'Netral')
+    # Jika berita terlalu banyak (tarikan awal/reset), lewati AI agar tidak kena limit 20/hari
+    if len(berita_mentah) > 15:
+        print("Volume berita terlalu besar untuk API gratis. Mengabaikan AI untuk mengamankan kuota...")
+        for item in berita_mentah:
+            item['sentimen'] = 'Netral' # Default sentimen
             berita_final_siap_simpan.append(item)
-            print(f"  ✓ Lolos | Sentimen: {item['sentimen']}")
-        else:
-            print("  x Dibuang (Konteks tidak relevan)")
-        
-        # Jeda 4 detik agar tidak terkena limit API gratisan
-        time.sleep(4) 
+    else:
+        print("Menggunakan AI Gemini untuk analisis mendalam...")
+        for item in berita_mentah:
+            print(f"- Analisis AI: {item['judul_berita'][:40]}...")
+            hasil_ai = analisis_dengan_ai(item['isi_berita'])
+            
+            if hasil_ai and hasil_ai.get('relevan') == True:
+                item['ringkasan'] = hasil_ai.get('ringkasan', item['ringkasan'])
+                item['sentimen'] = hasil_ai.get('sentimen', 'Netral')
+                berita_final_siap_simpan.append(item)
+                print(f"  ✓ Lolos | Sentimen: {item['sentimen']}")
+            else:
+                print("  x Dibuang (Konteks tidak relevan)")
+            
+            # Jeda dinaikkan jadi 15 detik agar aman dari limit "5 request per menit"
+            time.sleep(15) 
 
     # --- SIMPAN KE DATABASE ---
-    print(f"\nMenyimpan {len(berita_final_siap_simpan)} berita terverifikasi AI ke Supabase...")
+    print(f"\nMenyimpan {len(berita_final_siap_simpan)} berita ke Supabase...")
     berita_masuk = 0
     for item in berita_final_siap_simpan:
         try:
