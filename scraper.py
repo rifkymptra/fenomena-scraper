@@ -2,7 +2,7 @@ import os
 import json
 import time
 from supabase import create_client, Client
-from google import genai # Menggunakan library baru
+from google import genai 
 
 from scrapers.infogarut import scrape as infogarut
 from scrapers.antara import scrape as antara
@@ -17,103 +17,132 @@ if not SUPABASE_URL or not SUPABASE_KEY or not GEMINI_API_KEY:
     raise ValueError("Kredensial Supabase atau Gemini tidak ditemukan!")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# Inisiasi Client Gemini yang Baru
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
-def analisis_dengan_ai(teks):
-    """Mengirim teks ke Gemini untuk disaring, diringkas, dan dicek sentimennya."""
+def analisis_batch(chunk_berita, teks_keyword):
+    """Mengirim berita sekaligus ke AI menggunakan nomor urut sebagai ID sementara."""
+    
+    daftar_teks = []
+    # Menggunakan enumerate untuk memberikan nomor indeks (0, 1, 2, dst)
+    for i, b in enumerate(chunk_berita):
+        teks_potong = b['isi_berita'][:1500].replace('\n', ' ') 
+        daftar_teks.append({"id": i, "teks": f"Judul: {b['judul_berita']} | Isi: {teks_potong}"})
+
     prompt = f"""
-    Analisis artikel berita berikut yang berkaitan dengan Kabupaten Garut.
-    Tugas:
-    1. Tentukan apakah berita ini BENAR-BENAR membahas ekonomi, harga pangan, pertanian, pariwisata, UMKM, atau bisnis. (Jawab false jika ini berita kriminal, pembunuhan, pendidikan, atau kecelakaan meskipun ada kata 'harga').
-    2. Buat ringkasan yang enak dibaca (maksimal 2 kalimat).
-    3. Tentukan sentimen berita terhadap perekonomian (Positif, Negatif, atau Netral).
+    Kamu adalah analis data Badan Pusat Statistik (BPS) yang melakukan pengumpulan fenomena untuk mendukung penyusunan PDRB. Analisis {len(chunk_berita)} artikel berita Garut berikut.
+    Tugas untuk masing-masing artikel:
+    1. Cek relevansi (Apakah artikel ini BENAR-BENAR membahas konteks dari salah satu kata kunci berikut: {teks_keyword}?). Jawab false jika ini hanya berita kriminal, kecelakaan, atau tidak nyambung dengan konteks kata kunci tersebut meskipun kebetulan ada katanya.
+    2. Buat ringkasan 2 kalimat.
+    3. Tentukan sentimen (Positif, Negatif, atau Netral).
 
-    Output WAJIB berupa format JSON murni persis seperti ini (tanpa markdown tambahan):
-    {{
-        "relevan": true,
-        "ringkasan": "Isi ringkasan...",
-        "sentimen": "Positif"
-    }}
+    Output WAJIB berupa JSON Array murni, contoh format:
+    [
+      {{"id": 0, "relevan": true, "ringkasan": "Ringkasan...", "sentimen": "Positif"}},
+      {{"id": 1, "relevan": false, "ringkasan": "", "sentimen": "Netral"}}
+    ]
 
-    Teks berita:
-    {teks[:3000]} 
+    Daftar Artikel (JSON):
+    {json.dumps(daftar_teks)}
     """
+
     try:
-        # Cara panggil API dengan format genai terbaru
         response = ai_client.models.generate_content(
             model='gemini-3.6-flash',
             contents=prompt
         )
-        # Membersihkan format markdown bawaan AI agar bisa dibaca Python
         result_text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(result_text)
     except Exception as e:
         print(f"Error AI: {e}")
-        return None
+        return []
 
 def main():
-    print("--- MEMULAI PROSES SCRAPING ---")
+    print("--- MEMULAI PROSES SCRAPING HARIAN ---")
     
+    # 1. AMBIL KEYWORD & JADIKAN STRING
     try:
-        response = supabase.table('pengaturan_keyword').select('kata_kunci').eq('is_active', True).execute()
-        daftar_keyword = [item['kata_kunci'] for item in response.data]
+        res_kw = supabase.table('pengaturan_keyword').select('kata_kunci').eq('is_active', True).execute()
+        daftar_keyword = [item['kata_kunci'] for item in res_kw.data]
+        if not daftar_keyword:
+            print("Tidak ada keyword aktif di database!")
+            return
+        teks_keyword = ", ".join(daftar_keyword)
+        print(f"Menggunakan acuan kata kunci: {teks_keyword}")
     except Exception as e:
         print(f"Gagal ambil keyword: {e}")
         return
 
-    if not daftar_keyword: return
-
+    # 2. AMBIL URL EXISTING UNTUK DEDUPLIKASI
     try:
         res_url = supabase.table('fenomena_ekonomi').select('url').execute()
         url_existing = set(item['url'] for item in res_url.data) 
     except:
         url_existing = set()
 
+    # 3. PROSES SCRAPING
     berita = []
     print("\nMenjalankan scraper...")
     berita.extend(infogarut(daftar_keyword, url_existing))
     berita.extend(antara(daftar_keyword, url_existing))
     berita.extend(detik(daftar_keyword, url_existing))
 
-    if len(berita) == 0:
-        print("Tidak ada berita baru yang relevan.")
+    if not berita:
+        print("Tidak ada berita baru yang relevan hari ini.")
         return
 
     # Deduplikasi internal
     berita_unik_dict = {item['url']: item for item in berita}
     berita_mentah = list(berita_unik_dict.values())
 
-    # --- FASE KECERDASAN BUATAN (AI) ---
-    print(f"\nMemproses {len(berita_mentah)} berita...")
+    # 4. FASE KECERDASAN BUATAN (AI BATCHING)
+    print(f"\nMemproses {len(berita_mentah)} berita baru dengan AI...")
     berita_final_siap_simpan = []
-
-    # Jika berita terlalu banyak (tarikan awal/reset), lewati AI agar tidak kena limit 20/hari
-    if len(berita_mentah) > 15:
-        print("Volume berita terlalu besar untuk API gratis. Mengabaikan AI untuk mengamankan kuota...")
-        for item in berita_mentah:
-            item['sentimen'] = 'Netral' # Default sentimen
-            berita_final_siap_simpan.append(item)
-    else:
-        print("Menggunakan AI Gemini untuk analisis mendalam...")
-        for item in berita_mentah:
-            print(f"- Analisis AI: {item['judul_berita'][:40]}...")
-            hasil_ai = analisis_dengan_ai(item['isi_berita'])
+    batch_size = 30
+    
+    for i in range(0, len(berita_mentah), batch_size):
+        chunk = berita_mentah[i:i + batch_size]
+        print(f"\nMengirim Batch {i+1} sampai {i+len(chunk)} ke Gemini...")
+        
+        maksimal_coba = 3
+        berhasil = False
+        
+        for percobaan in range(maksimal_coba):
+            hasil_ai = analisis_batch(chunk, teks_keyword)
             
-            if hasil_ai and hasil_ai.get('relevan') == True:
-                item['ringkasan'] = hasil_ai.get('ringkasan', item['ringkasan'])
-                item['sentimen'] = hasil_ai.get('sentimen', 'Netral')
-                berita_final_siap_simpan.append(item)
-                print(f"  ✓ Lolos | Sentimen: {item['sentimen']}")
+            if hasil_ai:
+                berhasil = True
+                for hasil in hasil_ai:
+                    idx = hasil.get('id')
+                    # Cocokkan nomor urut AI dengan urutan artikel di dalam chunk
+                    if isinstance(idx, int) and 0 <= idx < len(chunk):
+                        if hasil.get('relevan') == True:
+                            artikel = chunk[idx]
+                            artikel['ringkasan'] = hasil.get('ringkasan', artikel.get('ringkasan', ''))
+                            artikel['sentimen'] = hasil.get('sentimen', 'Netral')
+                            berita_final_siap_simpan.append(artikel)
+                            print(f"  ✓ Lolos | Sentimen {artikel['sentimen']}: {artikel['judul_berita'][:30]}...")
+                        else:
+                            print(f"  x Dibuang (Konteks tidak relevan)")
+                break 
+                
             else:
-                print("  x Dibuang (Konteks tidak relevan)")
-            
-            # Jeda dinaikkan jadi 15 detik agar aman dari limit "5 request per menit"
-            time.sleep(15) 
+                print(f"Gagal (Terkena Limit). Menunggu 60 detik (Percobaan {percobaan+1}/{maksimal_coba})...")
+                time.sleep(60)
+        
+        if not berhasil:
+            print("Gagal 3x berturut-turut. Memasukkan sisa berita secara mentah tanpa AI...")
+            # Fallback (Jaring Pengaman): Masukkan data mentah agar berita tidak hilang
+            for artikel in chunk:
+                artikel['sentimen'] = 'Netral'
+                berita_final_siap_simpan.append(artikel)
 
-    # --- SIMPAN KE DATABASE ---
-    print(f"\nMenyimpan {len(berita_final_siap_simpan)} berita ke Supabase...")
+        # Pendinginan antar batch (hanya berlaku jika masih ada sisa batch setelahnya)
+        if i + batch_size < len(berita_mentah):
+            print("Istirahat 60 detik untuk mendinginkan server...")
+            time.sleep(60)
+
+    # 5. SIMPAN KE DATABASE
+    print(f"\nMenyimpan {len(berita_final_siap_simpan)} berita terverifikasi AI ke Supabase...")
     berita_masuk = 0
     for item in berita_final_siap_simpan:
         try:
@@ -122,7 +151,7 @@ def main():
         except Exception:
             pass
 
-    print(f"\nBerhasil disimpan: {berita_masuk} berita siap disajikan ke pimpinan!")
+    print(f"Berhasil disimpan: {berita_masuk} berita siap diekspor untuk penyusunan PDRB!")
 
 if __name__ == "__main__":
     main()
