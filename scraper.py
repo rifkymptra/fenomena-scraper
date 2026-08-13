@@ -97,7 +97,7 @@ def main():
     # 4. FASE KECERDASAN BUATAN (AI BATCHING)
     print(f"\nMemproses {len(berita_mentah)} berita baru dengan AI...")
     berita_final_siap_simpan = []
-    batch_size = 30
+    batch_size = 5
     
     for i in range(0, len(berita_mentah), batch_size):
         chunk = berita_mentah[i:i + batch_size]
